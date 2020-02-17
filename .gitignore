@@ -1,0 +1,7 @@
+
+.idea
+__pycache__
+bot_settings.inf
+database/path.txt
+log
+path.txt
