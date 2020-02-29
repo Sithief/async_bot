@@ -5,3 +5,7 @@ bot_settings.inf
 database/path.txt
 log
 path.txt
+.db-shm
+.db-wal
+.db
+.inf
