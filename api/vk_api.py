@@ -3,8 +3,6 @@ import asyncio
 import json
 import logging
 import aiohttp
-# import requests
-# import time
 import os
 
 
@@ -74,13 +72,21 @@ class VkApi:
         else:
             return None
 
-    async def upload_image(self, image_url, peer_id=0, default_image=''):
+    async def upload_image(self, image_url, peer_id=0, default_image='',
+                           group_id=None,
+                           server_method='photos.getMessagesUploadServer',
+                           save_method='photos.saveMessagesPhoto'):
         dir_path = os.path.abspath('img')
         if not os.path.exists(dir_path):
             os.makedirs(dir_path)
         async with aiohttp.ClientSession() as session:
-            upload_server = await self.request_get('photos.getMessagesUploadServer',
-                                                   {'peer_id': peer_id}, session)
+            upload_params = {}
+            if peer_id:
+                upload_params.update({'peer_id': peer_id})
+            if group_id:
+                upload_params.update({'group_id': group_id})
+            upload_server = await self.request_get(server_method,
+                                                   upload_params, session)
             if 'response' not in upload_server:
                 logging.error(f'upload_server: {upload_server}')
                 return default_image
@@ -104,11 +110,14 @@ class VkApi:
                     return default_image
             os.remove(filename)
 
-            save_image = await self.request_get('photos.saveMessagesPhoto', {
+            image_params = {
                 'photo': upload_response['photo'],
                 'server': upload_response['server'],
                 'hash': upload_response['hash'],
-            }, session)
+            }
+            if group_id:
+                image_params.update({'group_id': group_id})
+            save_image = await self.request_get(save_method, image_params, session)
             if 'response' not in save_image:
                 logging.error(f'save_image: {save_image}')
                 return default_image

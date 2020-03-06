@@ -131,6 +131,7 @@ if __name__ == '__main__':
     done, _ = ioloop.run_until_complete(asyncio.wait(tasks))
     admins = list(done)[0].result()
     db_api.update_admins(admins)
+    ioloop.create_task(system.post_arts())
 
     STATS = {
         'start_time': time.time(),

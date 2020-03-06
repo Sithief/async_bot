@@ -3,8 +3,9 @@ import json
 import asyncio
 import time
 import random
-from main import vk
+from main import vk, CONF
 from database import db_api
+from api import vk_api
 BTN_PER_PAGE = 12
 
 
@@ -810,3 +811,68 @@ async def prepare_art(image_url, group_id, post_id):
         'art': await vk.upload_image(image_url),
     }
 
+
+async def post_arts():
+    h = 60 * 60
+    post_time_list = [1 * h, 4 * h, 8 * h, 12 * h, 15 * h, 17 * h, 19 * h, 21 * h, 23 * h]
+    group_info = await vk.get_groups_info('')
+    group_id = group_info[0]['id']
+    token = CONF.get('VK', 'user_token', fallback='')
+    post_api = vk_api.VkApi(token, vk.v)
+    while True:
+        add_time = time.time() - 10 * 60
+        art_to_post = db_api.Art.select()\
+            .where((db_api.Art.accepted == 1) &
+                   (db_api.Art.add_time < add_time))\
+            .order_by(db_api.Art.add_time)\
+            .limit(1)
+        art_list = list(art_to_post)
+        if art_list:
+            art = art_list[0]
+            wall_info = asyncio.create_task(post_api.request_get('wall.get',
+                                                                 {'owner_id': -group_id,
+                                                                  'filter': 'postponed'}))
+
+            selected_tags = db_api.ArtTag.select().where(db_api.ArtTag.art == art)
+            tag_list = '\n'.join([f"#{t.tag.title.replace(' ', '_')}" for t in selected_tags])
+            group_link = f"@club{art.from_group.id} ({art.from_group.name})"
+
+            wall_info = await wall_info
+            print(wall_info)
+            if 'response' not in wall_info:
+                logging.error(f'wall_info {wall_info}')
+                await asyncio.sleep(5 * 60)
+                continue
+            if wall_info['response']['count'] >= 100:
+                await asyncio.sleep(30 * 60)
+                continue
+            image = asyncio.create_task(post_api.upload_image(art.url, group_id=group_id,
+                                                              server_method='photos.getWallUploadServer',
+                                                              save_method='photos.saveWallPhoto'))
+            postponed_posts_time = [i['date'] for i in wall_info['response']['items']]
+            print(postponed_posts_time)
+            post_day = time.time() // (24 * 60 * 60) + 3 * 60 * 60
+            post_iter = 0
+            while post_day + post_time_list[post_iter] in postponed_posts_time or \
+                    post_day + post_time_list[post_iter] < time.time():
+                post_iter += 1
+                if post_iter >= len(post_time_list):
+                    post_iter = 0
+                    post_day += 24 * 60 * 60
+
+            print(post_day + post_time_list[post_iter])
+            post_text = f"{tag_list}\n\n" \
+                        f"Источник: {group_link}"
+            post_info = await post_api.request_get('wall.post', {'owner_id': -group_id,
+                                                                 'from_group': 1,
+                                                                 'message': post_text,
+                                                                 'attachments': await image,
+                                                                 'publish_date': post_day + post_time_list[post_iter],
+                                                                 'copyright': art.source})
+            print(post_info)
+            if 'response' in post_info:
+                art.accepted = 2
+                art.save()
+            else:
+                logging.error(f'post_info {post_info}')
+        await asyncio.sleep(15 * 60)
