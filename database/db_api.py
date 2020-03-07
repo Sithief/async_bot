@@ -40,6 +40,7 @@ class Group(peewee.Model):
     subs = peewee.IntegerField(default=0)
     last_update = peewee.IntegerField(default=0)
     last_post = peewee.IntegerField(default=0)
+    last_scan = peewee.IntegerField(default=0)
 
     class Meta:
         database = db
@@ -54,6 +55,7 @@ class Art(peewee.Model):
     from_group = peewee.ForeignKeyField(Group, on_delete='cascade')
     accepted = peewee.IntegerField(default=0)
     add_time = peewee.IntegerField(default=0)
+    message_id = peewee.IntegerField(default=0)
 
     class Meta:
         database = db
@@ -116,12 +118,18 @@ def update_db():
             migrator.add_column('Group', 'accepted', peewee.BooleanField(default=False)),
         )
         Migrations.create(id=1)
+    if not Migrations.get_or_none(2):
+        logging.info(f'migration 2')
+        playhouse_migrate.migrate(
+            migrator.add_column('Group', 'last_scan', Group.last_scan),
+            migrator.add_column('Art', 'message_id', Art.message_id),
+        )
+        Migrations.create(id=2)
     #         playhouse_migrate.migrate(
     #             migrator.add_column('RpProfile', 'show_link', RpProfile.show_link),
     #             # migrator.rename_column('ProfileSettingList', 'item_id', 'item'),
     #             # migrator.drop_column('RoleOffer', 'to_profile_id')
     #         )
-
 
 
 if __name__ == "__main__":

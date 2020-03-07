@@ -87,9 +87,11 @@ async def vk_analyze(params):
         send_message = await vk.msg_send(bot_message.convert_to_vk())
         timer(timers, 'send_message')
         logging.info(f'msg send: {send_message}')
-        print(f'msg send: {send_message}, time: {round(time.time() - message.recieve_time, 3)}s.')
+        recieve_time = time.time() - message.recieve_time
+        print(f'msg send: {send_message}, time: {round(recieve_time, 3)}s.')
         if send_message:
             STATS['msg_send'] += 1
+            STATS['msg_send_time'] = [recieve_time] + STATS['msg_send_time'][:999]
 
     else:
         await msg_read
@@ -116,10 +118,18 @@ async def vk_callback(request):
 async def index(request):
     uptime_days = int(time.time() - STATS['start_time']) // (24 * 60 * 60)
     uptime = time.strftime('%X', time.gmtime(time.time() - STATS['start_time']))
+    msg_time = STATS['msg_send_time']
+    mean_5 = sum(msg_time[:5])/len(msg_time[:5]) if msg_time[:5] else 0
+    mean_25 = sum(msg_time[:25])/len(msg_time[:25]) if msg_time[:25] else 0
+    mean_100 = sum(msg_time[:100])/len(msg_time[:100]) if msg_time[:100] else 0
 
     return web.Response(text=f"server uptime: {uptime_days} days and {uptime}\n"
                              f"messages get: {STATS['msg_get']}\n"
-                             f"messages send: {STATS['msg_send']}")
+                             f"messages send: {STATS['msg_send']}\n"
+                             f"mean time: \n"
+                             f" - last 5:   {round(mean_5, 3)} s.\n"
+                             f" - last 25:  {round(mean_25, 3)} s.\n"
+                             f" - last 100: {round(mean_100, 3)} s.\n")
 
 
 if __name__ == '__main__':
@@ -136,7 +146,8 @@ if __name__ == '__main__':
     STATS = {
         'start_time': time.time(),
         'msg_get': 0,
-        'msg_send': 0
+        'msg_send': 0,
+        'msg_send_time': list()
      }
     app = web.Application()
     app.add_routes(routes)

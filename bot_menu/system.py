@@ -338,9 +338,10 @@ class Functions(AdminFunctions):
     async def group(self, msg):
         bot_message = BotMessage(
             peer_id=msg.peer_id,
-            text="Что вы хотите сделать дальше?",
+            text="Всё, что связано с группами",
             default_payload=msg.payload
         )
+        bot_message.keyboard.add_button('Проверить находку бота', {'mid': 'auto_add_group'}, row=1)
         bot_message.keyboard.add_button('Добавить группу вручную', {'mid': 'add_group'}, row=1)
 
         user = db_api.User.get_or_none(id=msg.peer_id)
@@ -349,14 +350,14 @@ class Functions(AdminFunctions):
             counts[i] = db_api.Group.select()\
                 .where((db_api.Group.accepted == i) & (db_api.Group.add_by == user))\
                 .count()
-        bot_message.keyboard.add_button(f'Группы на проверке ({counts[0]})',
+        bot_message.keyboard.add_button(f'Проверяются ({counts[0]})',
                                         {'mid': 'my_group', 'accept': 0}, row=3)
 
-        bot_message.keyboard.add_button(f'Одобренные группы ({counts[1]})',
+        bot_message.keyboard.add_button(f'Одобрены ({counts[1]})',
                                         {'mid': 'my_group', 'accept': 1}, row=4)
 
-        bot_message.keyboard.add_button(f'Отклонённые группы ({counts[-1]})',
-                                        {'mid': 'my_group', 'accept': -1}, row=5)
+        bot_message.keyboard.add_button(f'Отклонены ({counts[-1]})',
+                                        {'mid': 'my_group', 'accept': -1}, row=4)
 
         groups_count = db_api.Group.select().where(db_api.Group.accepted == 1).count()
         bot_message.keyboard.add_button(f"Группы художников ({groups_count})",
@@ -367,27 +368,28 @@ class Functions(AdminFunctions):
     async def art(self, msg):
         bot_message = BotMessage(
             peer_id=msg.peer_id,
-            text="Что вы хотите сделать дальше?",
+            text="Всё, что связано с артами",
             default_payload=msg.payload
         )
         user = db_api.User.get_or_none(id=msg.peer_id)
-        bot_message.keyboard.add_button(f"Найти новый арт", {'mid': 'add_image'}, row=1)
+        bot_message.keyboard.add_button(f"Найти новый арт", {'mid': 'add_image'},
+                                        row=1, color='primary')
         counts = {0: None, 1: None, 2: None, -1: None}
         for i in counts:
             counts[i] = db_api.Art.select()\
                 .where((db_api.Art.accepted == i) & (db_api.Art.add_by == user))\
                 .count()
-        bot_message.keyboard.add_button(f'Арты на проверке ({counts[0]})',
+        bot_message.keyboard.add_button(f'Проверяются ({counts[0]})',
                                         {'mid': 'my_art', 'accept': 0}, row=3)
 
-        bot_message.keyboard.add_button(f'Одобренные арты ({counts[1]})',
+        bot_message.keyboard.add_button(f'Одобрены ({counts[1]})',
                                         {'mid': 'my_art', 'accept': 1}, row=4)
 
-        bot_message.keyboard.add_button(f'Опубликованные арты ({counts[2]})',
-                                        {'mid': 'my_art', 'accept': 2}, row=5)
+        bot_message.keyboard.add_button(f'Опубликованы ({counts[2]})',
+                                        {'mid': 'my_art', 'accept': 2}, row=4)
 
-        bot_message.keyboard.add_button(f'Отклонённые арты ({counts[-1]})',
-                                        {'mid': 'my_art', 'accept': -1}, row=6)
+        bot_message.keyboard.add_button(f'Отклонены ({counts[-1]})',
+                                        {'mid': 'my_art', 'accept': -1}, row=3)
 
         bot_message.keyboard.navigation_buttons()
         return bot_message
@@ -458,6 +460,62 @@ class Functions(AdminFunctions):
         bot_message.keyboard.navigation_buttons()
         return bot_message
 
+    async def auto_add_group(self, msg):
+        bot_message = BotMessage(
+            peer_id=msg.peer_id,
+            text="текст",
+            default_payload=msg.payload,
+            save_menu=False
+        )
+        scan_group_list = db_api.Group.select()\
+            .where(db_api.Group.accepted)\
+            .order_by(db_api.Group.last_scan)\
+            .limit(10)
+        group = random.choice(list(scan_group_list))
+        groups_info = await vk.get_groups_info(group.id, 'links')
+        template = lambda l, t: l[l.find(t) + len(t):]
+        links = list()
+        for link in groups_info[0]['links']:
+            link = link['url']
+            if 'vk.com/' in link:
+                vk_link = template(link, 'vk.com/')
+                if 'club' in vk_link:
+                    links.append(template(vk_link, 'club'))
+                elif 'public' in vk_link:
+                    links.append(template(vk_link, 'public'))
+                else:
+                    links.append(vk_link)
+        new_groups_info = await vk.get_groups_info(','.join(links))
+        new_groups_info = [ng for ng in new_groups_info if ng['is_closed'] == 0]
+        new_group_ids = [ng['id'] for ng in new_groups_info]
+        groups_in_db = db_api.Group.select().where(db_api.Group.id.in_(new_group_ids))
+        group_ids_in_db = [g.id for g in groups_in_db]
+        groups_not_in_db = [ng for ng in new_groups_info if ng['id'] not in group_ids_in_db]
+        if not groups_not_in_db:
+            bot_message.text = "Бот просканировал группу и не нашел новых ссылок."
+            group.last_scan = time.time()
+            group.save()
+            bot_message.keyboard.add_button('Попробовать снова', {'mid': 'auto_add_group'})
+        else:
+            new_group = random.choice(groups_not_in_db)
+            group_link = f"@club{new_group['id']} ({new_group['name']})"
+            bot_message.text = f"Бот нашел группу {group_link}.\n" \
+                               f"Проверьте её, если это группа художника, " \
+                               f"отправьте 3 поста с артами и нажмите кнопку \"Сохранить\"."
+            bot_message.keyboard.add_button('Сохранить',
+                                            {'mid': 'save_group',
+                                             'gid': new_group['id']},
+                                            color='positive')
+            bot_message.keyboard.add_button('Это НЕ группа художника',
+                                            {'mid': 'save_not_group',
+                                             'gid': new_group['id']},
+                                            color='negative')
+            if len(groups_not_in_db) == 1:
+                group.last_scan = time.time()
+                group.save()
+        bot_message.keyboard.navigation_buttons()
+        return bot_message
+
     async def add_group(self, msg):
         bot_message = BotMessage(
             peer_id=msg.peer_id,
@@ -471,6 +529,27 @@ class Functions(AdminFunctions):
         bot_message.keyboard.navigation_buttons()
         return bot_message
 
+    async def save_not_group(self, msg):
+        bot_message = BotMessage(
+            peer_id=msg.peer_id,
+            text="",
+            default_payload=msg.payload,
+            save_menu=False
+        )
+        user = db_api.User.get_or_none(id=msg.peer_id)
+        group_info = await vk.get_groups_info(msg.payload[-1].get('gid'), 'members_count')
+        group_info = group_info[0]
+        group = db_api.Group.create(id=group_info['id'],
+                                    name=group_info['name'],
+                                    add_by=user,
+                                    subs=group_info['members_count'],
+                                    last_update=int(time.time()),
+                                    accepted=-2)
+        vk_link = f"@club{group.id} ({group.name})"
+        bot_message.text = f"Группа {vk_link} добавлена в базу как неподходящая для поиска артов.\n"
+        bot_message.keyboard.navigation_buttons()
+        return bot_message
+
     async def save_group(self, msg):
         posts = []
 
@@ -479,6 +558,7 @@ class Functions(AdminFunctions):
                 if attachment['type'] != 'wall':
                     continue
                 post = attachment['wall']
+                post['msg_id'] = message.message_id
                 if not post.get('from'):
                     groups_info = await vk.get_groups_info(-post['to_id'])
                     post['from'] = groups_info[0]
@@ -489,10 +569,11 @@ class Functions(AdminFunctions):
             default_payload=msg.payload,
             save_menu=False
         )
-        can_add, err_message = check_group_add_posts(posts)
+        can_add, err_message = check_group_add_posts(posts, msg.payload[-1].get('gid', 0))
         if not can_add:
             bot_message.text = err_message
-            bot_message.keyboard.add_button('Попробовать снова', {'mid': 'add_group'})
+            bot_message.keyboard.add_button('Попробовать снова', {'mid': 'add_group',
+                                                                  'gid': msg.payload[-1].get('gid', 0)})
         else:
             user = db_api.User.get_or_none(id=msg.peer_id)
             group_info = await vk.get_groups_info(-posts[0]['to_id'], 'members_count')
@@ -518,6 +599,7 @@ class Functions(AdminFunctions):
                                                     source=source,
                                                     add_by=user,
                                                     from_group=group,
+                                                    msg_id=post['msg_id'],
                                                     accepted=-2))
                 future_arts.append(task)
             arts = [art for art, is_new in await asyncio.gather(*future_arts)]
@@ -576,7 +658,7 @@ class Functions(AdminFunctions):
         return bot_message
 
     async def add_image(self, msg):
-        min_time = int(time.time() - 24 * 60 * 60)
+        min_time = int(time.time() - 3 * 24 * 60 * 60)
         groups = db_api.Group.select()\
             .where((db_api.Group.accepted == 1) &
                    (db_api.Group.last_post < min_time))\
@@ -634,7 +716,8 @@ class Functions(AdminFunctions):
                         break
                     task = asyncio.create_task(prepare_art(image_url=image_url,
                                                            group_id=attachment['wall']['from_id'],
-                                                           post_id=attachment['wall']['id']))
+                                                           post_id=attachment['wall']['id'],
+                                                           msg_id=message.message_id))
                     arts_tasks.append(task)
         arts = await asyncio.gather(*arts_tasks)
         bot_message = BotMessage(
@@ -676,7 +759,8 @@ class Functions(AdminFunctions):
                                       source=source,
                                       add_by=user,
                                       from_group=group,
-                                      add_time=time.time())
+                                      add_time=time.time(),
+                                      message_id=msg.payload[-1].get('msgid'))
         group.last_post = time.time()
         group.save()
         bot_message = BotMessage(
@@ -749,7 +833,7 @@ class Functions(AdminFunctions):
         return bot_message
 
 
-def check_group_add_posts(posts):
+def check_group_add_posts(posts, group_id):
     start_time = list(time.localtime(time.time()))
     start_time[1] -= 3
     start_time = time.mktime(tuple(start_time))
@@ -758,6 +842,9 @@ def check_group_add_posts(posts):
         return False, f"Нужно отправить не менее {min_posts} постов"
 
     from_info = posts[0].get('from', {})
+    if group_id and from_info.get('id') != group_id:
+        return False, "Принимаются только посты из найденной ботом группы"
+
     if not from_info.get('type') in ['group', 'page']:
         return False, "Принимаются только посты из группы"
 
@@ -787,7 +874,7 @@ def check_group_add_posts(posts):
     return True, ''
 
 
-async def save_art(image_url, source, add_by, from_group, accepted=0):
+async def save_art(image_url, source, add_by, from_group, msg_id, accepted=0):
     old_image = db_api.Art.get_or_none(url=image_url)
     if old_image:
         return old_image, False
@@ -799,16 +886,18 @@ async def save_art(image_url, source, add_by, from_group, accepted=0):
                                   add_by=add_by,
                                   from_group=from_group,
                                   add_time=time.time(),
+                                  message_id=msg_id,
                                   accepted=accepted)
     return new_image, True
 
 
-async def prepare_art(image_url, group_id, post_id):
+async def prepare_art(image_url, group_id, post_id, msg_id):
     return {
         'gid': abs(group_id),
         'pid': post_id,
         'url': image_url,
         'art': await vk.upload_image(image_url),
+        'msgid': msg_id
     }
 
 
@@ -838,7 +927,7 @@ async def post_arts():
             group_link = f"@club{art.from_group.id} ({art.from_group.name})"
 
             wall_info = await wall_info
-            print(wall_info)
+            # print(wall_info)
             if 'response' not in wall_info:
                 logging.error(f'wall_info {wall_info}')
                 await asyncio.sleep(5 * 60)
@@ -850,7 +939,7 @@ async def post_arts():
                                                               server_method='photos.getWallUploadServer',
                                                               save_method='photos.saveWallPhoto'))
             postponed_posts_time = [i['date'] for i in wall_info['response']['items']]
-            print(postponed_posts_time)
+            # print(postponed_posts_time)
             post_day = time.time() // (24 * 60 * 60) + 3 * 60 * 60
             post_iter = 0
             while post_day + post_time_list[post_iter] in postponed_posts_time or \
@@ -860,7 +949,7 @@ async def post_arts():
                     post_iter = 0
                     post_day += 24 * 60 * 60
 
-            print(post_day + post_time_list[post_iter])
+            # print(post_day + post_time_list[post_iter])
             post_text = f"{tag_list}\n\n" \
                         f"Источник: {group_link}"
             post_info = await post_api.request_get('wall.post', {'owner_id': -group_id,
@@ -869,7 +958,7 @@ async def post_arts():
                                                                  'attachments': await image,
                                                                  'publish_date': post_day + post_time_list[post_iter],
                                                                  'copyright': art.source})
-            print(post_info)
+            # print(post_info)
             if 'response' in post_info:
                 art.accepted = 2
                 art.save()

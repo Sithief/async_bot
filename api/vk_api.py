@@ -106,9 +106,12 @@ class VkApi:
                 if resp.status == 200:
                     upload_response = json.loads(await upload_image.text())
                 else:
-                    logging.error(f'download file: {resp.status}')
+                    logging.error(f'upload file: {resp.status}')
+                    if os.path.exists(filename):
+                        os.remove(filename)
                     return default_image
-            os.remove(filename)
+            if os.path.exists(filename):
+                os.remove(filename)
 
             image_params = {
                 'photo': upload_response['photo'],
