@@ -90,6 +90,7 @@ def init_db():
     if not db.get_tables():
         db.create_tables([User, Group, Admins, Migrations, Art, Tag, ArtTag])
         Migrations.create(id=1)
+        Migrations.create(id=2)
         return True
     return False
 
