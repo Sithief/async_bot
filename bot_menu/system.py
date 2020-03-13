@@ -1168,7 +1168,7 @@ async def inactive_notification():
     while True:
         last_msg_time = time.time() - 24 * 60 * 60
         last_post_time = time.time() - 3 * 24 * 60 * 60
-        last_online = time.time() - 10 * 60
+        last_online = time.time() - 15 * 60
         user_arts = db_api.Art.select(db_api.Art.add_by)\
             .where((db_api.Art.add_time < last_post_time))
         users = db_api.User.select().where(db_api.User.id.not_in(user_arts))
@@ -1185,7 +1185,6 @@ async def inactive_notification():
                     user_info.get('online_info', {}).get('last_seen', time.time()) < last_online):
                 continue
             messages = last_messages.get('response', {}).get('items', [])
-            bl = [m for m in messages if m['date'] > last_msg_time]
             if all([m['date'] < last_msg_time for m in messages]):
                 last_msg = [m for m in messages if 'keyboard' in m][0]
                 payloads = list()
@@ -1204,10 +1203,9 @@ async def inactive_notification():
                 bot_message.keyboard.add_button(f"Найти новый арт", {'mid': 'add_image'},
                                                 row=1, color='primary')
                 bot_message.keyboard.navigation_buttons()
-                print(f'message to {user.name}')
-                # await vk.msg_send(bot_message.convert_to_vk())
+                await vk.msg_send(bot_message.convert_to_vk())
 
-        await asyncio.sleep(30 * 60)
+        await asyncio.sleep(60 * 60)
 
 
 def get_group_link(group_id, group_name):
