@@ -1170,7 +1170,7 @@ async def inactive_notification():
         last_post_time = time.time() - 3 * 24 * 60 * 60
         last_online = time.time() - 15 * 60
         user_arts = db_api.Art.select(db_api.Art.add_by)\
-            .where((db_api.Art.add_time < last_post_time))
+            .where((db_api.Art.add_time > last_post_time))
         users = db_api.User.select().where(db_api.User.id.not_in(user_arts))
         print('found users', len(users))
         for user in users:
@@ -1185,25 +1185,28 @@ async def inactive_notification():
                     user_info.get('online_info', {}).get('last_seen', time.time()) < last_online):
                 continue
             messages = last_messages.get('response', {}).get('items', [])
-            if all([m['date'] < last_msg_time for m in messages]):
-                last_msg = [m for m in messages if 'keyboard' in m][0]
-                payloads = list()
-                for buttons_row in last_msg['keyboard']['buttons']:
+            if any([m['date'] > last_msg_time for m in messages]):
+                continue
+
+            payloads = [{}]
+            last_msg = [m for m in messages if 'keyboard' in m]
+            if last_msg:
+                for buttons_row in last_msg[0]['keyboard']['buttons']:
                     for button in buttons_row:
                         payloads.append(json.loads(button['action']['payload']))
-                payload = sorted(payloads, key=lambda x: len(x))[-1]
-                bot_message = BotMessage(
-                    peer_id=user.id,
-                    text=f"Приветик!\nНам очень нужна твоя помощь, "
-                         f"проверь пожалуйста группу художника, "
-                         f"наверняка там появились новые классные артики!",
-                    default_payload=payload,
-                    save_menu=False
-                )
-                bot_message.keyboard.add_button(f"Найти новый арт", {'mid': 'add_image'},
-                                                row=1, color='primary')
-                bot_message.keyboard.navigation_buttons()
-                await vk.msg_send(bot_message.convert_to_vk())
+            payload = sorted(payloads, key=lambda x: len(x))[-1]
+            bot_message = BotMessage(
+                peer_id=user.id,
+                text=f"Приветик!\nНам очень нужна твоя помощь, "
+                     f"проверь пожалуйста группу художника, "
+                     f"наверняка там появились новые классные артики!",
+                default_payload=payload,
+                save_menu=False
+            )
+            bot_message.keyboard.add_button(f"Найти новый арт", {'mid': 'add_image'},
+                                            row=1, color='primary')
+            bot_message.keyboard.navigation_buttons()
+            await vk.msg_send(bot_message.convert_to_vk())
 
         await asyncio.sleep(60 * 60)
 
