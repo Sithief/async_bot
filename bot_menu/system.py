@@ -12,6 +12,7 @@ TIME_BETWEEN_POSTS_FROM_GROUP = 3 * 24 * 60 * 60
 MAX_GROUP_LIKES = 75
 MAX_GROUP_SUBS = 1500
 MAX_POSTPONED_POSTS = 20
+LAST_MESSAGES = dict()
 
 
 class Button:
@@ -1031,7 +1032,7 @@ class Functions(AdminFunctions):
                           db_api.Art.accepted.in_([1, 2])))\
                 .group_by(db_api.User)\
                 .order_by(peewee.fn.COUNT(db_api.Art.id).desc())\
-                .limit(3)
+                .limit(10)
             # print(users.dicts())
             text = [f"{n + 1}) @id{u.id} ({u.name}) - {u.count}"
                     for n, u in enumerate(users) if u.count]
@@ -1206,14 +1207,20 @@ async def post_arts():
 
 
 async def inactive_notification():
+    global LAST_MESSAGES
     while True:
         last_msg_time = time.time() - 2 * 24 * 60 * 60
         last_post_time = time.time() - 5 * 24 * 60 * 60
         last_online = time.time() - 15 * 60
+        users_not_allowed = [i for i in LAST_MESSAGES if LAST_MESSAGES[i] > last_post_time]
+
         user_arts = db_api.Art.select(db_api.Art.add_by)\
             .where((db_api.Art.add_time > last_post_time))
-        users = db_api.User.select().where(db_api.User.id.not_in(user_arts))
-        print('found users', len(users))
+
+        users = db_api.User.select()\
+            .where(db_api.User.id.not_in(user_arts) &
+                   db_api.User.id.not_in(users_not_allowed))
+
         for user in users:
             last_messages = await vk.request_get('messages.getHistory',
                                                  {'count': 10,
@@ -1221,13 +1228,15 @@ async def inactive_notification():
                                                   'extended': 1})
             conv_info = last_messages.get('response', {}).get('conversations', [{}])[0]
             user_info = last_messages.get('response', {}).get('profiles', [{}])[0]
-            if not conv_info.get('can_write', {}).get('allowed') or (
-                    user_info.get('online_info', {}).get('visible') and
-                    user_info.get('online_info', {}).get('last_seen', time.time()) < last_online):
-                continue
             messages = last_messages.get('response', {}).get('items', [])
-            if any([m['date'] > last_msg_time for m in messages]) \
-                    or len([m for m in messages if not m['out']]) < 3:
+            if not conv_info.get('can_write', {}).get('allowed') or len([m for m in messages if not m['out']]) < 3:
+                LAST_MESSAGES[user_info['id']] = int(time.time())
+                continue
+            if user_info.get('online_info', {}).get('visible') and \
+                    user_info.get('online_info', {}).get('last_seen', time.time()) < last_online:
+                continue
+            if messages[0]['date'] > last_msg_time:
+                LAST_MESSAGES[user_info['id']] = messages[0]['date']
                 continue
 
             payloads = [{}]
@@ -1239,8 +1248,8 @@ async def inactive_notification():
             payload = sorted(payloads, key=lambda x: len(x))[-1]
             bot_message = BotMessage(
                 peer_id=user.id,
-                text=f"Приветик!\nНам очень нужна твоя помощь, "
-                     f"проверь пожалуйста группу художника, "
+                text=f"Приветик!\nНам очень нужна твоя помощь в поиске артов!\n"
+                     f"Проверь пожалуйста группу художника, "
                      f"наверняка там появились новые классные артики!",
                 default_payload=payload,
                 save_menu=False
@@ -1248,8 +1257,8 @@ async def inactive_notification():
             bot_message.keyboard.add_button(f"Найти новый арт", {'mid': 'add_image'},
                                             row=1, color='primary')
             bot_message.keyboard.navigation_buttons()
-            await vk.msg_send(bot_message.convert_to_vk())
-
+            # await vk.msg_send(bot_message.convert_to_vk())
+            asyncio.create_task(vk.msg_send(bot_message.convert_to_vk()))
         await asyncio.sleep(60 * 60)
 
 
