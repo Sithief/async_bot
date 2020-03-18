@@ -3,6 +3,7 @@ import json
 import asyncio
 import time
 import random
+import peewee
 from main import vk, CONF
 from database import db_api
 from api import vk_api
@@ -434,6 +435,8 @@ class Functions(AdminFunctions):
                                             {'mid': 'change_tag_list'}, row=4)
             bot_message.text += f"\n\nОдобренных для публикации постов: {posts_count}"
 
+        bot_message.keyboard.add_button('Топ пользователей',
+                                        {'mid': 'users_top', 'top': 'art'}, row=7)
         bot_message.keyboard.navigation_buttons()
         return bot_message
 
@@ -492,7 +495,6 @@ class Functions(AdminFunctions):
 
         bot_message.keyboard.add_button(f'Отклонены ({counts[-1]})',
                                         {'mid': 'my_art', 'accept': -1}, row=3)
-
         bot_message.keyboard.navigation_buttons()
         return bot_message
 
@@ -1013,6 +1015,45 @@ class Functions(AdminFunctions):
         bot_message.keyboard.navigation_buttons()
         return bot_message
 
+    async def users_top(self, msg):
+        bot_message = BotMessage(
+            peer_id=msg.peer_id,
+            text="Топ самых активных пользователей.\n"
+                 "Выберите категорию",
+            default_payload=msg.payload,
+            save_menu=False
+        )
+        if msg.payload[-1].get('top') == 'art':
+            users = db_api.User\
+                .select(db_api.User, peewee.fn.COUNT(db_api.Art.id).alias('count'))\
+                .join(db_api.Art, peewee.JOIN.LEFT_OUTER,
+                      on=((db_api.Art.add_by == db_api.User.id) &
+                          db_api.Art.accepted.in_([1, 2])))\
+                .group_by(db_api.User)\
+                .order_by(peewee.fn.COUNT(db_api.Art.id).desc())\
+                .limit(3)
+            # print(users.dicts())
+            text = [f"{n + 1}) @id{u.id} ({u.name}) - {u.count}"
+                    for n, u in enumerate(users) if u.count]
+            bot_message.text = "Топ самых активных участников, добавляющих арты:\n\n" + '\n'.join(text)
+        if msg.payload[-1].get('top') == 'group':
+            users = db_api.User\
+                .select(db_api.User, peewee.fn.COUNT(db_api.Group.id).alias('count'))\
+                .join(db_api.Group, peewee.JOIN.LEFT_OUTER,
+                      on=((db_api.Group.add_by == db_api.User.id) &
+                          db_api.Group.accepted.in_([1])))\
+                .group_by(db_api.User)\
+                .order_by(peewee.fn.COUNT(db_api.Group.id).desc())\
+                .limit(10)
+            text = [f"{n + 1}) @id{u.id} ({u.name}) - {u.count}"
+                    for n, u in enumerate(users) if u.count]
+            bot_message.text = "Топ самых активных участников, добавляющих группы:\n\n" + '\n'.join(text)
+
+        bot_message.keyboard.add_button('Арты', {'mid': 'users_top', 'top': 'art'})
+        bot_message.keyboard.add_button('Группы', {'mid': 'users_top', 'top': 'group'})
+        bot_message.keyboard.navigation_buttons()
+        return bot_message
+
 
 def check_group_add_posts(posts, group_id):
     start_time = list(time.localtime(time.time()))
@@ -1166,8 +1207,8 @@ async def post_arts():
 
 async def inactive_notification():
     while True:
-        last_msg_time = time.time() - 24 * 60 * 60
-        last_post_time = time.time() - 3 * 24 * 60 * 60
+        last_msg_time = time.time() - 2 * 24 * 60 * 60
+        last_post_time = time.time() - 5 * 24 * 60 * 60
         last_online = time.time() - 15 * 60
         user_arts = db_api.Art.select(db_api.Art.add_by)\
             .where((db_api.Art.add_time > last_post_time))
