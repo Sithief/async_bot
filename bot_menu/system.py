@@ -1185,7 +1185,8 @@ async def inactive_notification():
                     user_info.get('online_info', {}).get('last_seen', time.time()) < last_online):
                 continue
             messages = last_messages.get('response', {}).get('items', [])
-            if any([m['date'] > last_msg_time for m in messages]):
+            if any([m['date'] > last_msg_time for m in messages]) \
+                    or len([m for m in messages if not m['out']]) < 3:
                 continue
 
             payloads = [{}]
