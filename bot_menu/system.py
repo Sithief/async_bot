@@ -577,7 +577,7 @@ class Functions(AdminFunctions):
         for a in arts:
             post_time = time.strftime('%d.%m', time.localtime(a.add_time))
             bot_message.keyboard.add_button(
-                f"{post_time} {a.from_group.name}",
+                f"{post_time} {a.from_group.name[:40]}",
                 {'mid': 'view_art', 'aid': a.id}
             )
         bot_message.keyboard.add_button('<-', {'mid': 'my_art',

@@ -51,6 +51,7 @@ class VkApi:
         if 'response' in msg:
             return msg['response']['items'][0]
         else:
+            logging.error(f'send message {msg}')
             return None
 
     async def msg_send(self, payload):
@@ -62,6 +63,7 @@ class VkApi:
         if 'response' in msg:
             return msg['response']
         else:
+            logging.error(f'send message {msg}')
             return None
 
     async def msg_read(self, peer_id):
@@ -70,6 +72,7 @@ class VkApi:
         if 'response' in msg:
             return msg['response']
         else:
+            logging.error(f'send message {msg}')
             return None
 
     async def upload_image(self, image_url, peer_id=0, default_image='',

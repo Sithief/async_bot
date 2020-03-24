@@ -84,6 +84,7 @@ async def vk_analyze(params):
         await msg_read
         timer(timers, 'read_message')
         print(f'msg_to_send: {bot_message.convert_to_vk()}')
+        a = bot_message.convert_to_vk()
         send_message = await vk.msg_send(bot_message.convert_to_vk())
         timer(timers, 'send_message')
         logging.info(f'msg send: {send_message}')
