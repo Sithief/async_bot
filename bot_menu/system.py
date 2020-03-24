@@ -106,10 +106,18 @@ class AdminFunctions:
             text="Список тегов",
             default_payload=msg.payload
         )
-        tags = db_api.Tag.select().limit(BTN_PER_PAGE)
+        offset = msg.payload[-1].get('offset', 0)
+        tags = db_api.Tag.select().limit(BTN_PER_PAGE).order_by(db_api.Tag.title).offset(offset * BTN_PER_PAGE)
+        tags_count = db_api.Tag.select().count()
         for t in tags:
             bot_message.keyboard.add_button(t.title, {'mid': 'change_tag', 'tid': t.id})
         bot_message.keyboard.add_button('Создать новый тег', {'mid': 'change_tag', 'new': True}, row=5)
+        bot_message.keyboard.add_button('<-', {'mid': 'change_tag_list',
+                                               'offset': max(offset - 1, 0)},
+                                        row=9)
+        bot_message.keyboard.add_button('->', {'mid': 'change_tag_list',
+                                               'offset': min(offset + 1, tags_count // BTN_PER_PAGE)},
+                                        row=9)
         bot_message.keyboard.navigation_buttons()
         return bot_message
 
@@ -153,7 +161,22 @@ class AdminFunctions:
         bot_message.keyboard.add_button("Изменить описание", {'mid': 'change_tag',
                                                               'tid': tag.id,
                                                               'new_text': 'descr'})
+        bot_message.keyboard.add_button("удалить тег", {'mid': 'delete_tag',
+                                                        'tid': tag.id}, color='negative', row=2)
         bot_message.keyboard.navigation_buttons()
+        return bot_message
+
+    async def delete_tag(self, msg):
+        tag_id = msg.payload[-1].get('tid')
+        if tag_id:
+            db_api.Tag.delete().where(db_api.Tag.id == tag_id).execute()
+            bot_message = BotMessage(
+                peer_id=msg.peer_id,
+                text="тег удалён",
+                default_payload=msg.payload,
+                save_menu=False
+            )
+            bot_message.keyboard.navigation_buttons()
         return bot_message
 
     async def confirm_group_list(self, msg):
@@ -162,7 +185,9 @@ class AdminFunctions:
             text="Список добавленных пользователями групп для подтверждения.",
             default_payload=msg.payload
         )
-        groups = db_api.Group.select().where(db_api.Group.accepted == 0).limit(BTN_PER_PAGE)
+        groups = db_api.Group.select().where(db_api.Group.accepted == 0)\
+            .limit(BTN_PER_PAGE)\
+            .order_by(db_api.Group.last_update)
         for g in groups:
             bot_message.keyboard.add_button(g.name[:35], {'mid': 'confirm_group',
                                                           'gid': g.id})
@@ -273,7 +298,8 @@ class AdminFunctions:
         group_link = get_group_link(art.from_group.id, art.from_group.name)
         user_link = f"@id{art.add_by.id} ({art.add_by.name})"
         selected_tags = db_api.ArtTag.select().where(db_api.ArtTag.art == art)
-        tag_list = '\n'.join([f"#{t.tag.title.replace(' ', '_')}" for t in selected_tags])
+        tag_list = [f"#{t.tag.title.replace(' ', '_')}" for t in selected_tags]
+        tag_list = '\n'.join(sorted(tag_list))
 
         art_accept = msg.payload[-1].get('accept')
         bot_message = BotMessage(
@@ -511,7 +537,7 @@ class Functions(AdminFunctions):
         groups = db_api.Group.select()\
             .where((db_api.Group.accepted == accept) &
                    (db_api.Group.add_by == user))\
-            .limit(BTN_PER_PAGE).offset(offset)
+            .limit(BTN_PER_PAGE).offset(offset * BTN_PER_PAGE)
         groups_count = db_api.Group.select(). \
             where((db_api.Group.accepted == accept) &
                    (db_api.Group.add_by == user)) \
@@ -543,7 +569,7 @@ class Functions(AdminFunctions):
         arts = db_api.Art.select() \
             .where((db_api.Art.accepted == accept) &
                    (db_api.Art.add_by == user)) \
-            .limit(BTN_PER_PAGE).offset(offset)
+            .limit(BTN_PER_PAGE).offset(offset * BTN_PER_PAGE)
         arts_count = db_api.Art.select(). \
             where((db_api.Art.accepted == accept) &
                   (db_api.Art.add_by == user)) \
@@ -560,7 +586,7 @@ class Functions(AdminFunctions):
                                         row=9)
         bot_message.keyboard.add_button('->', {'mid': 'my_art',
                                                'accept': accept,
-                                               'offset': min(offset + 1, arts_count // 16)},
+                                               'offset': min(offset + 1, arts_count // BTN_PER_PAGE)},
                                         row=9)
         bot_message.keyboard.navigation_buttons()
         return bot_message
@@ -763,7 +789,7 @@ class Functions(AdminFunctions):
         groups = db_api.Group.select()\
             .where(db_api.Group.accepted == 1)\
             .order_by(order_by)\
-            .offset(offset*BTN_PER_PAGE)\
+            .offset(offset * BTN_PER_PAGE)\
             .limit(BTN_PER_PAGE)
         posts_count = db_api.Group.select().\
             where(db_api.Group.accepted == 1)\
@@ -868,6 +894,11 @@ class Functions(AdminFunctions):
                 attachments=group_images
             )
             bot_message.keyboard.add_button('Cохранить пост', {'mid': 'verify_image', 'gid': group.id})
+            bot_message.keyboard.add_button(
+                'Отправить группу на повторную проверку',
+                {'mid': 'view_group', 'gid': group.id, 'del': 1},
+                color='negative', row=9
+            )
         else:
             bot_message = BotMessage(
                 peer_id=msg.peer_id,
@@ -897,7 +928,7 @@ class Functions(AdminFunctions):
                         break
                     elif db_api.Art.get_or_none(url=image_url):
                         already_in_base = True
-                        break
+                        continue
                     task = asyncio.create_task(prepare_art(image_url=image_url,
                                                            group_id=attachment['wall']['from_id'],
                                                            post_id=attachment['wall']['id'],
@@ -980,7 +1011,11 @@ class Functions(AdminFunctions):
                            db_api.ArtTag.tag == tag)\
                     .execute()
 
-        all_tags = db_api.Tag.select().limit(BTN_PER_PAGE)
+        offset = msg.payload[-1].get('offset', 0)
+        tags_count = db_api.Tag.select().count()
+        all_tags = db_api.Tag.select().limit(BTN_PER_PAGE)\
+            .offset(offset * BTN_PER_PAGE)\
+            .order_by(db_api.Tag.title)
         selected_tags = [t.tag for t in db_api.ArtTag.select().where(db_api.ArtTag.art == art)]
         for t in all_tags:
             color = 'default'
@@ -991,7 +1026,19 @@ class Functions(AdminFunctions):
             bot_message.keyboard.add_button(t.title, {'mid': 'art_tags',
                                                       'aid': art.id,
                                                       'tid': t.id,
-                                                      'add': add}, color=color)
+                                                      'add': add,
+                                                      'offset': offset}, color=color)
+        tag_list = [f"#{t.title.replace(' ', '_')}" for t in selected_tags]
+        tag_list.sort()
+        bot_message.text += '\n'.join(tag_list)
+        bot_message.keyboard.add_button('<-', {'mid': 'art_tags',
+                                               'aid': art.id,
+                                               'offset': max(offset - 1, 0)},
+                                        row=9)
+        bot_message.keyboard.add_button('->', {'mid': 'art_tags',
+                                               'aid': art.id,
+                                               'offset': min(offset + 1, tags_count // BTN_PER_PAGE)},
+                                        row=9)
         bot_message.keyboard.navigation_buttons()
         return bot_message
 
