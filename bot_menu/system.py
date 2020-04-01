@@ -475,6 +475,7 @@ class Functions(AdminFunctions):
         )
         bot_message.keyboard.add_button('Проверить находку бота', {'mid': 'auto_add_group'}, row=1, color='primary')
         bot_message.keyboard.add_button('Добавить группу вручную', {'mid': 'add_group'}, row=1, color='primary')
+        bot_message.keyboard.add_button('Обновить информацию о ценах', {'mid': 'update_price'}, row=2, color='primary')
 
         user = db_api.User.get_or_none(id=msg.peer_id)
         counts = {0: None, 1: None, -1: None}
@@ -482,14 +483,14 @@ class Functions(AdminFunctions):
             counts[i] = db_api.Group.select()\
                 .where((db_api.Group.accepted == i) & (db_api.Group.add_by == user))\
                 .count()
-        bot_message.keyboard.add_button(f'Проверяются ({counts[0]})',
+        bot_message.keyboard.add_button(f'Проверка ({counts[0]})',
                                         {'mid': 'my_group', 'accept': 0}, row=3)
 
         bot_message.keyboard.add_button(f'Одобрены ({counts[1]})',
-                                        {'mid': 'my_group', 'accept': 1}, row=4)
+                                        {'mid': 'my_group', 'accept': 1}, row=3)
 
         bot_message.keyboard.add_button(f'Отклонены ({counts[-1]})',
-                                        {'mid': 'my_group', 'accept': -1}, row=4)
+                                        {'mid': 'my_group', 'accept': -1}, row=3)
 
         groups_count = db_api.Group.select().where(db_api.Group.accepted == 1).count()
         bot_message.keyboard.add_button(f"Группы художников ({groups_count})",
@@ -771,7 +772,8 @@ class Functions(AdminFunctions):
     async def view_group_list(self, msg):
         order_list = {0: "дате последнего обновления",
                       1: "алфавиту",
-                      2: "количеству подписчиков"}
+                      2: "Ценам",
+                      3: "количеству подписчиков"}
         order = msg.payload[-1].get('sort', 0)
         bot_message = BotMessage(
             peer_id=msg.peer_id,
@@ -779,21 +781,31 @@ class Functions(AdminFunctions):
             default_payload=msg.payload
         )
         offset = msg.payload[-1].get('offset', 0)
-        if order == 1:
-            order_by = db_api.Group.name
-        elif order == 2:
-            order_by = db_api.Group.subs
-        else:
-            order_by = db_api.Group.last_update.desc()
 
-        groups = db_api.Group.select()\
-            .where(db_api.Group.accepted == 1)\
-            .order_by(order_by)\
-            .offset(offset * BTN_PER_PAGE)\
-            .limit(BTN_PER_PAGE)
-        posts_count = db_api.Group.select().\
-            where(db_api.Group.accepted == 1)\
-            .count()
+        if order == 2:
+            prices = db_api.Price.select() \
+                .order_by(db_api.Price.accepted < 0, db_api.Price.head + db_api.Price.half + db_api.Price.full) \
+                .offset(offset * BTN_PER_PAGE) \
+                .limit(BTN_PER_PAGE)
+            posts_count = db_api.Price.select().count()
+            groups = [p.group for p in prices]
+        else:
+            if order == 1:
+                order_by = db_api.Group.name
+            elif order == 3:
+                order_by = db_api.Group.subs
+            else:
+                order_by = db_api.Group.last_update.desc()
+
+            groups = db_api.Group.select()\
+                .where(db_api.Group.accepted == 1)\
+                .order_by(order_by)\
+                .offset(offset * BTN_PER_PAGE)\
+                .limit(BTN_PER_PAGE)
+
+            posts_count = db_api.Group.select().\
+                where(db_api.Group.accepted == 1)\
+                .count()
         for g in groups:
             bot_message.keyboard.add_button(
                 g.name[:35], {'mid': 'view_group', 'gid': g.id}
@@ -824,8 +836,21 @@ class Functions(AdminFunctions):
 
     async def view_group(self, msg):
         group = db_api.Group.get_or_none(id=msg.payload[-1].get('gid'))
+        price = db_api.Price.get_or_none(group=group)
         group_link = get_group_link(group.id, group.name)
         user_link = f"@id{group.add_by.id} ({group.add_by.name})"
+        if price:
+            if price.accepted >= 0:
+                price_text = "Заказы в группе открыты."
+                price_text += f"\nПортрет: {price.head}р."
+                price_text += f"\nДо пояса: {price.half}р."
+                price_text += f"\nПолный рост: {price.full}р."
+            else:
+                price_text = "Заказы в группе закрыты."
+            update_time = int(time.time() - price.last_scan) // (24 * 60 * 60)
+            price_text += f"\nПоследнее обновление информации о заказах: {update_time} дней назад"
+        else:
+            price_text = 'Нет информации о заказах в группе.'
         images = db_api.Art.select()\
             .where((db_api.Art.from_group == group) &
                    (db_api.Art.accepted.in_([-2, 1, 2]))) \
@@ -835,7 +860,8 @@ class Functions(AdminFunctions):
         bot_message = BotMessage(
             peer_id=msg.peer_id,
             text=f"Группа {group_link} \n"
-                 f"Добавил(а) {user_link}",
+                 f"Добавил(а) {user_link}\n"
+                 f"{price_text}",
             default_payload=msg.payload,
             attachments=group_images,
             save_menu=False
@@ -848,17 +874,22 @@ class Functions(AdminFunctions):
             group.accepted = 1
             group.save()
 
+        bot_message.keyboard.add_button(
+            'Информация о заказах',
+            {'mid': 'save_order_info', 'gid': group.id},
+            color='primary', row=2
+        )
         if group.accepted == 1:
             bot_message.keyboard.add_button(
                 'Отправить на повторную проверку',
                 {'mid': 'view_group', 'gid': group.id, 'del': 1},
-                color='negative'
+                color='negative', row=3
             )
         else:
             bot_message.keyboard.add_button(
                 'Отменить повторную проверку',
                 {'mid': 'view_group', 'gid': group.id, 'del': 0},
-                color='positive'
+                color='positive', row=3
             )
         bot_message.keyboard.navigation_buttons()
         return bot_message
@@ -1060,6 +1091,119 @@ class Functions(AdminFunctions):
         if art.accepted == 0 and art.add_by.id == msg.peer_id:
             bot_message.keyboard.add_button('Изменить теги', {'mid': 'art_tags',
                                                               'aid': art.id})
+        bot_message.keyboard.navigation_buttons()
+        return bot_message
+
+    async def update_price(self, msg):
+        actual_time = time.time() - 30 * 24 * 60 * 60
+        groups_with_info = db_api.Price.select(db_api.Price.group)\
+            .where((db_api.Price.last_scan > actual_time) &
+                   db_api.Price.accepted.in_([-2, 0, 1]))
+
+        groups = db_api.Group.select()\
+            .where((db_api.Group.id.not_in(groups_with_info)) &
+                   (db_api.Group.accepted > 0)).limit(50)
+        groups = list(groups)
+        if groups:
+            group = random.choice(groups)
+            group_link = get_group_link(group.id, group.name)
+            bot_message = BotMessage(
+                peer_id=msg.peer_id,
+                text=f"У нас нет актуальной информации о группе {group_link}\n\n"
+                     f"Загляни пожалуйста в группу художника и проверь информацию о заказах.\n"
+                     f"Если заказы в группе, добавь цены в базу бота.\n"
+                     f"Обычно информация о заказах указана в обсуждениях, описании группы или товарах.",
+                default_payload=msg.payload
+            )
+            bot_message.keyboard.add_button('Заказы открыты',
+                                            {'mid': 'save_order_info', 'gid': group.id, 'orders': True},
+                                            color='positive')
+            bot_message.keyboard.add_button('Заказы закрыты',
+                                            {'mid': 'save_order_info', 'gid': group.id, 'orders': False},
+                                            color='negative')
+        else:
+            bot_message = BotMessage(
+                peer_id=msg.peer_id,
+                text=f"групп, где стоит обновить информацию о заказах - пока нет.",
+                default_payload=msg.payload
+            )
+        bot_message.keyboard.navigation_buttons()
+        return bot_message
+
+    async def save_order_info(self, msg):
+        user = db_api.User.get_or_none(id=msg.peer_id)
+        group = db_api.Group.get_or_none(id=msg.payload[-1].get('gid'))
+        price = db_api.Price.get_or_none(group=group)
+        images = db_api.Art.select() \
+            .where((db_api.Art.from_group == group) &
+                   (db_api.Art.accepted.in_([-2, 1, 2]))) \
+            .order_by(db_api.Art.add_time.desc()) \
+            .limit(10)
+        group_images = [i.vk_id for i in images]
+        bot_message = BotMessage(
+            peer_id=msg.peer_id,
+            text="",
+            attachments=group_images,
+            default_payload=msg.payload,
+            save_menu=False
+        )
+        accepted = 0 if msg.payload[-1].get('orders') else -2
+        if not price:
+            price = db_api.Price.create(group=group,
+                                        add_by=user,
+                                        accepted=accepted,
+                                        last_scan=time.time())
+        if 'orders' in msg.payload[-1] and price.accepted != accepted:
+            price.accepted = accepted
+            price.last_scan = time.time()
+            price.add_by = user
+            price.save()
+        elif 'price' in msg.payload[-1]:
+            if msg.unprocessed_messages and msg.unprocessed_messages[-1].text.isdigit():
+                new_price = abs(int(msg.unprocessed_messages[-1].text))
+                if msg.payload[-1]['price'] == 'head':
+                    price.head = new_price
+                elif msg.payload[-1]['price'] == 'half':
+                    price.half = new_price
+                elif msg.payload[-1]['price'] == 'full':
+                    price.full = new_price
+                price.last_scan = time.time()
+                price.add_by = user
+                price.save()
+            else:
+                bot_message.text = "Нужно отпрвить сообщение с ценой, " \
+                                   "а затем еще раз нажать кнопку, чему эта цена соответствует.\n\n"
+
+        if price.accepted >= 0:
+            group_link = get_group_link(group.id, group.name)
+            bot_message.text += f"Отлично, в группе {group_link} открыты заказы!\n\n" \
+                                f"Уточни пожалуйста цены на заказы у этого художника:\n" \
+                                f"Портрет - {price.head if price.head else 'нет данных'}\n" \
+                                f"До пояса - {price.half if price.half else 'нет данных'}\n" \
+                                f"В полный рост - {price.full if price.full else 'нет данных'}\n\n" \
+                                f"Обычно информация о заказа указана в обсуждениях, описании группы или товарах.\n" \
+                                f"Если есть несколько вариантов, стоит указывать самый дешевый цветной."
+            bot_message.keyboard.add_button('Портрет',
+                                            {'mid': 'save_order_info', 'gid': group.id, 'price': 'head'},
+                                            color='primary', row=1)
+            bot_message.keyboard.add_button('Половина тела',
+                                            {'mid': 'save_order_info', 'gid': group.id, 'price': 'half'},
+                                            color='primary', row=2)
+            bot_message.keyboard.add_button('В полный рост',
+                                            {'mid': 'save_order_info', 'gid': group.id, 'price': 'full'},
+                                            color='primary', row=3)
+            bot_message.keyboard.add_button('Заказы закрыты',
+                                            {'mid': 'save_order_info', 'gid': group.id, 'orders': False},
+                                            color='negative', row=8)
+            bot_message.keyboard.add_button('Следующая группа', {'mid': 'update_price'})
+        else:
+            group_link = get_group_link(group.id, group.name)
+            bot_message.text = f"Жаль что в группе {group_link} закрыты заказаы.\n" \
+                               f"Хочешь заполнить информацию о еще одной группе?"
+            bot_message.keyboard.add_button('Заказы открыты',
+                                            {'mid': 'save_order_info', 'gid': group.id, 'orders': True},
+                                            color='positive')
+            bot_message.keyboard.add_button('Следующая группа', {'mid': 'update_price'})
         bot_message.keyboard.navigation_buttons()
         return bot_message
 

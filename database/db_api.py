@@ -46,6 +46,19 @@ class Group(peewee.Model):
         database = db
 
 
+class Price(peewee.Model):
+    group = peewee.ForeignKeyField(Group, primary_key=True, on_delete='cascade')
+    add_by = peewee.ForeignKeyField(User)
+    accepted = peewee.IntegerField(default=0)
+    last_scan = peewee.IntegerField(default=0)
+    head = peewee.IntegerField(default=0)
+    half = peewee.IntegerField(default=0)
+    full = peewee.IntegerField(default=0)
+
+    class Meta:
+        database = db
+
+
 class Art(peewee.Model):
     id = peewee.IntegerField(primary_key=True)
     vk_id = peewee.CharField(unique=True)
@@ -88,9 +101,10 @@ class Migrations(peewee.Model):
 
 def init_db():
     if not db.get_tables():
-        db.create_tables([User, Group, Admins, Migrations, Art, Tag, ArtTag])
+        db.create_tables([User, Group, Admins, Migrations, Art, Tag, ArtTag, Price])
         Migrations.create(id=1)
         Migrations.create(id=2)
+        Migrations.create(id=3)
         return True
     return False
 
@@ -126,6 +140,10 @@ def update_db():
             migrator.add_column('Art', 'message_id', Art.message_id),
         )
         Migrations.create(id=2)
+    if not Migrations.get_or_none(3):
+        logging.info(f'migration 3')
+        db.create_tables([Price])
+        Migrations.create(id=3)
     #         playhouse_migrate.migrate(
     #             migrator.add_column('RpProfile', 'show_link', RpProfile.show_link),
     #             # migrator.rename_column('ProfileSettingList', 'item_id', 'item'),
