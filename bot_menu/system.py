@@ -1400,6 +1400,10 @@ async def post_arts():
 async def inactive_notification():
     global LAST_MESSAGES
     while True:
+        arts_count = db_api.Art.select().where(db_api.Art.accepted == 1).count()
+        if arts_count >= 50:
+            await asyncio.sleep(60 * 60)
+            continue
         last_msg_time = time.time() - 2 * 24 * 60 * 60
         last_post_time = time.time() - 5 * 24 * 60 * 60
         last_online = time.time() - 15 * 60
